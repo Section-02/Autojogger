@@ -8,6 +8,15 @@ export type Schedule = {
   total_run_seconds: number;
 };
 
+export async function getCurrentSchedule(db: SQLiteDatabase) {
+  const preference = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_metadata WHERE key = 'current_schedule_id'");
+  return db.getFirstAsync<Schedule>('SELECT * FROM schedules WHERE id = ?', preference?.value ?? 'schedule-01');
+}
+
+export async function setCurrentSchedule(db: SQLiteDatabase, scheduleId: string) {
+  await db.runAsync("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('current_schedule_id', ?)", scheduleId);
+}
+
 export const schedules = [
   ['schedule-01', 'Run 1:00 / Walk 3:30 × 6, then Run 1:00', 420, 0],
   ['schedule-02', 'Run 1:00 / Walk 1:30 × 7, then Run 1:00', 480, 0],
@@ -69,4 +78,6 @@ export async function initializeDatabase(db: SQLiteDatabase) {
       await db.runAsync("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('schema_version', '1')");
     });
   }
+  await db.runAsync('UPDATE schedules SET pattern = ? WHERE id = ?', schedules[3][1], schedules[3][0]);
+  await db.runAsync('UPDATE schedules SET pattern = ? WHERE id = ?', schedules[4][1], schedules[4][0]);
 }

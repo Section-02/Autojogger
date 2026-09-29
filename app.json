@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Autoläufer",
+    "slug": "autolaufer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "autolaufer",
+    "userInterfaceStyle": "light",
+    "ios": { "supportsTablet": false, "bundleIdentifier": "com.autolaufer.app" },
+    "plugins": ["expo-router"]
+  }
+}

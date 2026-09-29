@@ -8,6 +8,9 @@ export type Schedule = {
   total_run_seconds: number;
 };
 
+export type WorkoutInterval = { id: number; phase: 'warmup' | 'jog' | 'walk' | 'cooldown'; duration_seconds: number };
+type IntervalDefinition = Omit<WorkoutInterval, 'id'>;
+
 export async function getCurrentSchedule(db: SQLiteDatabase) {
   const preference = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_metadata WHERE key = 'current_schedule_id'");
   return db.getFirstAsync<Schedule>('SELECT * FROM schedules WHERE id = ?', preference?.value ?? 'schedule-01');
@@ -37,6 +40,27 @@ export const schedules = [
   ['schedule-17', 'Run 30:00 continuously', 1800, 1],
 ] as const;
 
+const repeat = (items: IntervalDefinition[], count: number) => Array.from({ length: count }, () => items).flat();
+export const scheduleIntervals: Record<string, IntervalDefinition[]> = {
+  'schedule-01': [{ phase: 'warmup', duration_seconds: 300 }, ...repeat([{ phase: 'jog', duration_seconds: 60 }, { phase: 'walk', duration_seconds: 210 }], 6), { phase: 'jog', duration_seconds: 60 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-02': [{ phase: 'warmup', duration_seconds: 300 }, ...repeat([{ phase: 'jog', duration_seconds: 60 }, { phase: 'walk', duration_seconds: 90 }], 7), { phase: 'jog', duration_seconds: 60 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-03': [{ phase: 'warmup', duration_seconds: 300 }, ...repeat([{ phase: 'jog', duration_seconds: 90 }, { phase: 'walk', duration_seconds: 120 }], 5), { phase: 'jog', duration_seconds: 90 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-04': [{ phase: 'warmup', duration_seconds: 300 }, ...repeat([{ phase: 'jog', duration_seconds: 90 }, { phase: 'walk', duration_seconds: 90 }, { phase: 'jog', duration_seconds: 180 }, { phase: 'walk', duration_seconds: 180 }], 2), { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-05': [{ phase: 'warmup', duration_seconds: 300 }, ...repeat([{ phase: 'jog', duration_seconds: 150 }, { phase: 'walk', duration_seconds: 90 }, { phase: 'jog', duration_seconds: 210 }, { phase: 'walk', duration_seconds: 210 }], 2), { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-06': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 180 }, { phase: 'walk', duration_seconds: 90 }, { phase: 'jog', duration_seconds: 300 }, { phase: 'walk', duration_seconds: 150 }, { phase: 'jog', duration_seconds: 180 }, { phase: 'walk', duration_seconds: 90 }, { phase: 'jog', duration_seconds: 300 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-07': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 300 }, { phase: 'walk', duration_seconds: 180 }, { phase: 'jog', duration_seconds: 300 }, { phase: 'walk', duration_seconds: 180 }, { phase: 'jog', duration_seconds: 300 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-08': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 480 }, { phase: 'walk', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 480 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-09': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 600 }, { phase: 'walk', duration_seconds: 330 }, { phase: 'jog', duration_seconds: 540 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-10': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 900 }, { phase: 'walk', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 600 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-11': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 1080 }, { phase: 'walk', duration_seconds: 240 }, { phase: 'jog', duration_seconds: 480 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-12': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 1200 }, { phase: 'walk', duration_seconds: 210 }, { phase: 'jog', duration_seconds: 420 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-13': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 1320 }, { phase: 'walk', duration_seconds: 180 }, { phase: 'jog', duration_seconds: 300 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-14': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 1500 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-15': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 1590 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-16': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 1680 }, { phase: 'cooldown', duration_seconds: 300 }],
+  'schedule-17': [{ phase: 'warmup', duration_seconds: 300 }, { phase: 'jog', duration_seconds: 1800 }, { phase: 'cooldown', duration_seconds: 300 }],
+};
+
 export async function initializeDatabase(db: SQLiteDatabase) {
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
@@ -62,6 +86,14 @@ export async function initializeDatabase(db: SQLiteDatabase) {
       modified INTEGER NOT NULL DEFAULT 0,
       deleted_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS schedule_intervals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id TEXT NOT NULL REFERENCES schedules(id),
+      position INTEGER NOT NULL,
+      phase TEXT NOT NULL,
+      duration_seconds INTEGER NOT NULL,
+      UNIQUE(schedule_id, position)
+    );
   `);
 
   const existing = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM schedules');
@@ -80,4 +112,14 @@ export async function initializeDatabase(db: SQLiteDatabase) {
   }
   await db.runAsync('UPDATE schedules SET pattern = ? WHERE id = ?', schedules[3][1], schedules[3][0]);
   await db.runAsync('UPDATE schedules SET pattern = ? WHERE id = ?', schedules[4][1], schedules[4][0]);
+  const intervalCount = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM schedule_intervals');
+  if ((intervalCount?.count ?? 0) === 0) {
+    await db.withTransactionAsync(async () => {
+      for (const [scheduleId, intervals] of Object.entries(scheduleIntervals)) {
+        for (const [position, interval] of intervals.entries()) {
+          await db.runAsync('INSERT INTO schedule_intervals (schedule_id, position, phase, duration_seconds) VALUES (?, ?, ?, ?)', scheduleId, position, interval.phase, interval.duration_seconds);
+        }
+      }
+    });
+  }
 }

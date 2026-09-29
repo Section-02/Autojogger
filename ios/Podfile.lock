@@ -227,6 +227,8 @@ PODS:
   - ExpoRouter (57.0.24):
     - ExpoModulesCore
     - RNScreens
+  - ExpoSpeech (57.0.3):
+    - ExpoModulesCore
   - ExpoSQLite (57.0.3):
     - ExpoModulesCore
   - ExpoSymbols (57.0.3):
@@ -2222,6 +2224,7 @@ DEPENDENCIES:
   - ExpoModulesJSI (from `../node_modules/expo-modules-jsi/apple`)
   - ExpoModulesWorklets (from `../node_modules/expo-modules-core/ExpoModulesWorklets.podspec`)
   - ExpoRouter (from `../node_modules/expo-router/ios`)
+  - ExpoSpeech (from `../node_modules/expo-speech/ios`)
   - ExpoSQLite (from `../node_modules/expo-sqlite/ios`)
   - ExpoSymbols (from `../node_modules/expo-symbols/ios`)
   - "ExpoUI (from `../node_modules/expo-router/node_modules/@expo/ui/ios`)"
@@ -2347,6 +2350,8 @@ EXTERNAL SOURCES:
     :podspec: "../node_modules/expo-modules-core/ExpoModulesWorklets.podspec"
   ExpoRouter:
     :path: "../node_modules/expo-router/ios"
+  ExpoSpeech:
+    :path: "../node_modules/expo-speech/ios"
   ExpoSQLite:
     :path: "../node_modules/expo-sqlite/ios"
   ExpoSymbols:
@@ -2534,6 +2539,7 @@ SPEC CHECKSUMS:
   ExpoModulesJSI: 383849017851b1ebacbd78cfaa32b18b6152585e
   ExpoModulesWorklets: 40d29262efc034e4357f2713e6037a41a27218d6
   ExpoRouter: fa0e119f32bdc83dcccfa2b08859e8e582c233d2
+  ExpoSpeech: ab83f97ede99c65a23fd4c228122deadc430de01
   ExpoSQLite: 72e6ada0504a27cd043eb1bf172db70485a761b6
   ExpoSymbols: 37a3a6e5847edb08b83a5ee04d3b46525e205f00
   ExpoUI: 9cc4762adb625c875850b69a66451dd9c6bb7767

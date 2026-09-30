@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NativeEventEmitter, NativeModules, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { NativeEventEmitter, NativeModules, Pressable, StyleSheet, Text, TextInput, Vibration, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -39,6 +39,9 @@ export default function RunScreen() {
   const [distance, setDistance] = useState('');
   const [rating, setRating] = useState<'easy' | 'just_right' | 'too_hard' | null>(null);
   const [notes, setNotes] = useState('');
+  const [voiceCues, setVoiceCues] = useState(true);
+  const [haptics, setHaptics] = useState(true);
+  const [cueVolume, setCueVolume] = useState(1);
   const notificationIds = useRef<string[]>([]);
   const recoveryLoaded = useRef(false);
   const audioSession = NativeModules.AutolauferAudioSession as { startWorkoutAudio?: () => Promise<boolean>; stopWorkoutAudio?: () => Promise<boolean> } | undefined;
@@ -46,6 +49,11 @@ export default function RunScreen() {
   const loadSchedule = useCallback(async () => {
     const current = await getCurrentSchedule(db);
     if (!current) return;
+    const preferences = await db.getAllAsync<{ key: string; value: string }>("SELECT key, value FROM app_metadata WHERE key IN ('voice_cues_enabled', 'haptics_enabled', 'cue_volume')");
+    const preferenceValues = Object.fromEntries(preferences.map((item) => [item.key, item.value]));
+    setVoiceCues(preferenceValues.voice_cues_enabled !== '0');
+    setHaptics(preferenceValues.haptics_enabled !== '0');
+    setCueVolume(Math.max(0, Math.min(1, Number(preferenceValues.cue_volume ?? 1))));
     const recovery = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_metadata WHERE key = 'active_workout'");
     let selected = current;
     let saved: RecoveryState | null = null;
@@ -79,6 +87,11 @@ export default function RunScreen() {
 
   useFocusEffect(useCallback(() => { loadSchedule(); }, [loadSchedule]));
 
+  const speakCue = useCallback((message: string) => {
+    if (haptics) Vibration.vibrate(35);
+    if (voiceCues) Speech.speak(message, { volume: cueVolume });
+  }, [cueVolume, haptics, voiceCues]);
+
   useEffect(() => {
     if (!schedule || sessionState === 'idle' || !workoutStartedAt) return;
     const recovery: RecoveryState = { scheduleId: schedule.id, sessionState, currentIndex, secondsRemaining, workoutStartedAt, workoutStatus, workoutModified, distance, rating, notes };
@@ -92,18 +105,18 @@ export default function RunScreen() {
         if (remaining > 1) return remaining - 1;
         if (sessionState === 'ready') {
           const first = intervals[0];
-          if (first) { setSessionState('active'); setCurrentIndex(0); Speech.speak(phaseLabels[first.phase]); return first.duration_seconds; }
+          if (first) { setSessionState('active'); setCurrentIndex(0); speakCue(phaseLabels[first.phase]); return first.duration_seconds; }
         }
         const nextIndex = currentIndex + 1;
         const next = intervals[nextIndex];
-        if (!next) { void cancelNotifications(); setWorkoutStatus('completed'); setSessionState('entry'); Speech.speak('Workout complete'); return 0; }
+        if (!next) { void cancelNotifications(); setWorkoutStatus('completed'); setSessionState('entry'); speakCue('Workout complete'); return 0; }
         setCurrentIndex(nextIndex);
-        Speech.speak(phaseLabels[next.phase]);
+        speakCue(phaseLabels[next.phase]);
         return next.duration_seconds;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [sessionState, currentIndex, intervals]);
+  }, [sessionState, currentIndex, intervals, speakCue]);
 
   const moveSchedule = async (direction: -1 | 1) => {
     if (!schedule || sessionState !== 'idle') return;
@@ -137,12 +150,12 @@ export default function RunScreen() {
       delay += next.duration_seconds;
     }
   };
-  const startWorkout = async () => { if (intervals.length) { const permission = await Notifications.requestPermissionsAsync(); await audioSession?.startWorkoutAudio?.(); setWorkoutStartedAt(new Date().toISOString()); setWorkoutStatus('completed'); setWorkoutModified(false); setDistance(''); setRating(null); setNotes(''); setSessionState('ready'); setSecondsRemaining(5); Speech.speak('Get ready'); if (permission.status === 'granted') await scheduleNotifications(-1, 5); } };
+  const startWorkout = async () => { if (intervals.length) { const permission = await Notifications.requestPermissionsAsync(); await audioSession?.startWorkoutAudio?.(); setWorkoutStartedAt(new Date().toISOString()); setWorkoutStatus('completed'); setWorkoutModified(false); setDistance(''); setRating(null); setNotes(''); setSessionState('ready'); setSecondsRemaining(5); speakCue('Get ready'); if (permission.status === 'granted') await scheduleNotifications(-1, 5); } };
   const pauseWorkout = async () => { await cancelNotifications(); setSessionState('paused'); };
   const resumeWorkout = async () => { await audioSession?.startWorkoutAudio?.(); setSessionState('active'); await scheduleNotifications(currentIndex, secondsRemaining); };
   const endWorkout = async () => { await cancelNotifications(); await audioSession?.stopWorkoutAudio?.(); Speech.stop(); setWorkoutStatus('ended_early'); setSessionState('entry'); };
-  const skipInterval = async () => { const next = intervals[currentIndex + 1]; setWorkoutModified(true); if (!next) { await cancelNotifications(); setWorkoutStatus('completed'); setSessionState('entry'); return; } setCurrentIndex(currentIndex + 1); setSecondsRemaining(next.duration_seconds); Speech.speak(phaseLabels[next.phase]); if (sessionState === 'active') await scheduleNotifications(currentIndex + 1, next.duration_seconds); };
-  const repeatWalk = () => { const current = intervals[currentIndex]; if (current?.phase === 'walk') { setWorkoutModified(true); setSecondsRemaining(current.duration_seconds); Speech.speak('Walk'); } };
+  const skipInterval = async () => { const next = intervals[currentIndex + 1]; setWorkoutModified(true); if (!next) { await cancelNotifications(); setWorkoutStatus('completed'); setSessionState('entry'); return; } setCurrentIndex(currentIndex + 1); setSecondsRemaining(next.duration_seconds); speakCue(phaseLabels[next.phase]); if (sessionState === 'active') await scheduleNotifications(currentIndex + 1, next.duration_seconds); };
+  const repeatWalk = () => { const current = intervals[currentIndex]; if (current?.phase === 'walk') { setWorkoutModified(true); setSecondsRemaining(current.duration_seconds); speakCue('Walk'); } };
   const saveWorkout = async () => {
     if (!schedule || !workoutStartedAt || !rating) return;
     await cancelNotifications();

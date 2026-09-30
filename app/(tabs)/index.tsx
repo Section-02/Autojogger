@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useSQLiteContext } from 'expo-sqlite';
 import * as Speech from 'expo-speech';
+import * as Notifications from 'expo-notifications';
 import { Screen } from '../../src/components/Screen';
 import { colors } from '../../src/theme';
 import { getCurrentSchedule, setCurrentSchedule, type Schedule, type WorkoutInterval } from '../../src/data/database';
@@ -11,6 +12,7 @@ import { getCurrentSchedule, setCurrentSchedule, type Schedule, type WorkoutInte
 type SessionState = 'idle' | 'ready' | 'active' | 'paused' | 'finished' | 'entry';
 const phaseLabels: Record<WorkoutInterval['phase'], string> = { warmup: 'WARM UP', jog: 'JOG', walk: 'WALK', cooldown: 'COOL DOWN' };
 const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }) });
 
 export default function RunScreen() {
   const db = useSQLiteContext();
@@ -25,6 +27,7 @@ export default function RunScreen() {
   const [distance, setDistance] = useState('');
   const [rating, setRating] = useState<'easy' | 'just_right' | 'too_hard' | null>(null);
   const [notes, setNotes] = useState('');
+  const notificationIds = useRef<string[]>([]);
 
   const loadSchedule = useCallback(async () => {
     const current = await getCurrentSchedule(db);
@@ -48,7 +51,7 @@ export default function RunScreen() {
         }
         const nextIndex = currentIndex + 1;
         const next = intervals[nextIndex];
-        if (!next) { setWorkoutStatus('completed'); setSessionState('entry'); Speech.speak('Workout complete'); return 0; }
+        if (!next) { void cancelNotifications(); setWorkoutStatus('completed'); setSessionState('entry'); Speech.speak('Workout complete'); return 0; }
         setCurrentIndex(nextIndex);
         Speech.speak(phaseLabels[next.phase]);
         return next.duration_seconds;
@@ -63,14 +66,29 @@ export default function RunScreen() {
     if (next) { await setCurrentSchedule(db, next.id); setSchedule(next); const nextIntervals = await db.getAllAsync<WorkoutInterval>('SELECT id, phase, duration_seconds FROM schedule_intervals WHERE schedule_id = ? ORDER BY position', next.id); setIntervals(nextIntervals); setCurrentIndex(0); setSecondsRemaining(nextIntervals[0]?.duration_seconds ?? 300); }
   };
 
-  const startWorkout = () => { if (intervals.length) { setWorkoutStartedAt(new Date().toISOString()); setWorkoutStatus('completed'); setWorkoutModified(false); setDistance(''); setRating(null); setNotes(''); setSessionState('ready'); setSecondsRemaining(5); Speech.speak('Get ready'); } };
-  const pauseWorkout = () => setSessionState('paused');
-  const resumeWorkout = () => setSessionState('active');
-  const endWorkout = () => { Speech.stop(); setWorkoutStatus('ended_early'); setSessionState('entry'); };
-  const skipInterval = () => { const next = intervals[currentIndex + 1]; setWorkoutModified(true); if (!next) { setWorkoutStatus('completed'); setSessionState('entry'); return; } setCurrentIndex(currentIndex + 1); setSecondsRemaining(next.duration_seconds); Speech.speak(phaseLabels[next.phase]); };
+  const cancelNotifications = async () => { if (notificationIds.current.length) { await Promise.all(notificationIds.current.map((id) => Notifications.cancelScheduledNotificationAsync(id))); notificationIds.current = []; } };
+  const scheduleNotifications = async (startIndex: number, firstDelay: number) => {
+    await cancelNotifications();
+    const permission = await Notifications.getPermissionsAsync();
+    if (permission.status !== 'granted') return;
+    let delay = firstDelay;
+    for (let index = startIndex + 1; index < intervals.length; index += 1) {
+      const next = intervals[index];
+      const following = intervals[index + 1];
+      const id = await Notifications.scheduleNotificationAsync({ content: { title: 'Autoläufer', body: following ? `${phaseLabels[next.phase]} · Next: ${phaseLabels[following.phase]} in ${formatTime(next.duration_seconds)}` : phaseLabels[next.phase], sound: 'default' }, trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(Date.now() + delay * 1000) } });
+      notificationIds.current.push(id);
+      delay += next.duration_seconds;
+    }
+  };
+  const startWorkout = async () => { if (intervals.length) { const permission = await Notifications.requestPermissionsAsync(); setWorkoutStartedAt(new Date().toISOString()); setWorkoutStatus('completed'); setWorkoutModified(false); setDistance(''); setRating(null); setNotes(''); setSessionState('ready'); setSecondsRemaining(5); Speech.speak('Get ready'); if (permission.status === 'granted') await scheduleNotifications(-1, 5); } };
+  const pauseWorkout = async () => { await cancelNotifications(); setSessionState('paused'); };
+  const resumeWorkout = async () => { setSessionState('active'); await scheduleNotifications(currentIndex, secondsRemaining); };
+  const endWorkout = async () => { await cancelNotifications(); Speech.stop(); setWorkoutStatus('ended_early'); setSessionState('entry'); };
+  const skipInterval = async () => { const next = intervals[currentIndex + 1]; setWorkoutModified(true); if (!next) { await cancelNotifications(); setWorkoutStatus('completed'); setSessionState('entry'); return; } setCurrentIndex(currentIndex + 1); setSecondsRemaining(next.duration_seconds); Speech.speak(phaseLabels[next.phase]); if (sessionState === 'active') await scheduleNotifications(currentIndex + 1, next.duration_seconds); };
   const repeatWalk = () => { const current = intervals[currentIndex]; if (current?.phase === 'walk') { setWorkoutModified(true); setSecondsRemaining(current.duration_seconds); Speech.speak('Walk'); } };
   const saveWorkout = async () => {
     if (!schedule || !workoutStartedAt || !rating) return;
+    await cancelNotifications();
     await db.runAsync('INSERT INTO workouts (id, schedule_id, started_at, ended_at, status, rating, distance_value, distance_unit, notes, modified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', `workout-${Date.now()}`, schedule.id, workoutStartedAt, new Date().toISOString(), workoutStatus, rating, distance ? Number(distance) : null, 'mi', notes.trim() || null, workoutModified ? 1 : 0);
     setSessionState('idle'); setCurrentIndex(0); setSecondsRemaining(intervals[0]?.duration_seconds ?? 300); setWorkoutStartedAt(null);
   };

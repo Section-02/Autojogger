@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { NativeEventEmitter, NativeModules, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -41,6 +41,7 @@ export default function RunScreen() {
   const [notes, setNotes] = useState('');
   const notificationIds = useRef<string[]>([]);
   const recoveryLoaded = useRef(false);
+  const audioSession = NativeModules.AutolauferAudioSession as { startWorkoutAudio?: () => Promise<boolean>; stopWorkoutAudio?: () => Promise<boolean> } | undefined;
 
   const loadSchedule = useCallback(async () => {
     const current = await getCurrentSchedule(db);
@@ -111,6 +112,18 @@ export default function RunScreen() {
   };
 
   const cancelNotifications = async () => { if (notificationIds.current.length) { await Promise.all(notificationIds.current.map((id) => Notifications.cancelScheduledNotificationAsync(id))); notificationIds.current = []; } };
+  useEffect(() => {
+    if (!audioSession) return;
+    const emitter = new NativeEventEmitter(NativeModules.AutolauferAudioSession);
+    const subscription = emitter.addListener('AutolauferAudioInterruption', ({ type }: { type: string }) => {
+      if (type === 'began' && (sessionState === 'ready' || sessionState === 'active')) {
+        void cancelNotifications();
+        Speech.stop();
+        setSessionState('paused');
+      }
+    });
+    return () => subscription.remove();
+  }, [audioSession, sessionState]);
   const scheduleNotifications = async (startIndex: number, firstDelay: number) => {
     await cancelNotifications();
     const permission = await Notifications.getPermissionsAsync();
@@ -124,15 +137,16 @@ export default function RunScreen() {
       delay += next.duration_seconds;
     }
   };
-  const startWorkout = async () => { if (intervals.length) { const permission = await Notifications.requestPermissionsAsync(); setWorkoutStartedAt(new Date().toISOString()); setWorkoutStatus('completed'); setWorkoutModified(false); setDistance(''); setRating(null); setNotes(''); setSessionState('ready'); setSecondsRemaining(5); Speech.speak('Get ready'); if (permission.status === 'granted') await scheduleNotifications(-1, 5); } };
+  const startWorkout = async () => { if (intervals.length) { const permission = await Notifications.requestPermissionsAsync(); await audioSession?.startWorkoutAudio?.(); setWorkoutStartedAt(new Date().toISOString()); setWorkoutStatus('completed'); setWorkoutModified(false); setDistance(''); setRating(null); setNotes(''); setSessionState('ready'); setSecondsRemaining(5); Speech.speak('Get ready'); if (permission.status === 'granted') await scheduleNotifications(-1, 5); } };
   const pauseWorkout = async () => { await cancelNotifications(); setSessionState('paused'); };
-  const resumeWorkout = async () => { setSessionState('active'); await scheduleNotifications(currentIndex, secondsRemaining); };
-  const endWorkout = async () => { await cancelNotifications(); Speech.stop(); setWorkoutStatus('ended_early'); setSessionState('entry'); };
+  const resumeWorkout = async () => { await audioSession?.startWorkoutAudio?.(); setSessionState('active'); await scheduleNotifications(currentIndex, secondsRemaining); };
+  const endWorkout = async () => { await cancelNotifications(); await audioSession?.stopWorkoutAudio?.(); Speech.stop(); setWorkoutStatus('ended_early'); setSessionState('entry'); };
   const skipInterval = async () => { const next = intervals[currentIndex + 1]; setWorkoutModified(true); if (!next) { await cancelNotifications(); setWorkoutStatus('completed'); setSessionState('entry'); return; } setCurrentIndex(currentIndex + 1); setSecondsRemaining(next.duration_seconds); Speech.speak(phaseLabels[next.phase]); if (sessionState === 'active') await scheduleNotifications(currentIndex + 1, next.duration_seconds); };
   const repeatWalk = () => { const current = intervals[currentIndex]; if (current?.phase === 'walk') { setWorkoutModified(true); setSecondsRemaining(current.duration_seconds); Speech.speak('Walk'); } };
   const saveWorkout = async () => {
     if (!schedule || !workoutStartedAt || !rating) return;
     await cancelNotifications();
+    await audioSession?.stopWorkoutAudio?.();
     await db.runAsync('INSERT INTO workouts (id, schedule_id, started_at, ended_at, status, rating, distance_value, distance_unit, notes, modified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', `workout-${Date.now()}`, schedule.id, workoutStartedAt, new Date().toISOString(), workoutStatus, rating, distance ? Number(distance) : null, 'mi', notes.trim() || null, workoutModified ? 1 : 0);
     await db.runAsync("DELETE FROM app_metadata WHERE key = 'active_workout'");
     setSessionState('idle'); setCurrentIndex(0); setSecondsRemaining(intervals[0]?.duration_seconds ?? 300); setWorkoutStartedAt(null);

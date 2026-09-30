@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "autolaufer",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": { "supportsTablet": false, "bundleIdentifier": "com.autolaufer.app" },
     "plugins": ["expo-router", "expo-notifications"]

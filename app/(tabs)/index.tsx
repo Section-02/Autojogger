@@ -10,6 +10,18 @@ import { colors } from '../../src/theme';
 import { getCurrentSchedule, setCurrentSchedule, type Schedule, type WorkoutInterval } from '../../src/data/database';
 
 type SessionState = 'idle' | 'ready' | 'active' | 'paused' | 'finished' | 'entry';
+type RecoveryState = {
+  scheduleId: string;
+  sessionState: Exclude<SessionState, 'idle'>;
+  currentIndex: number;
+  secondsRemaining: number;
+  workoutStartedAt: string;
+  workoutStatus: 'completed' | 'ended_early';
+  workoutModified: boolean;
+  distance: string;
+  rating: 'easy' | 'just_right' | 'too_hard' | null;
+  notes: string;
+};
 const phaseLabels: Record<WorkoutInterval['phase'], string> = { warmup: 'WARM UP', jog: 'JOG', walk: 'WALK', cooldown: 'COOL DOWN' };
 const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }) });
@@ -28,17 +40,49 @@ export default function RunScreen() {
   const [rating, setRating] = useState<'easy' | 'just_right' | 'too_hard' | null>(null);
   const [notes, setNotes] = useState('');
   const notificationIds = useRef<string[]>([]);
+  const recoveryLoaded = useRef(false);
 
   const loadSchedule = useCallback(async () => {
     const current = await getCurrentSchedule(db);
     if (!current) return;
-    const loadedIntervals = await db.getAllAsync<WorkoutInterval>('SELECT id, phase, duration_seconds FROM schedule_intervals WHERE schedule_id = ? ORDER BY position', current.id);
-    setSchedule(current);
+    const recovery = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_metadata WHERE key = 'active_workout'");
+    let selected = current;
+    let saved: RecoveryState | null = null;
+    if (!recoveryLoaded.current && recovery?.value) {
+      try {
+        const parsed = JSON.parse(recovery.value) as RecoveryState;
+        if (parsed?.scheduleId && parsed?.workoutStartedAt) {
+          const recoveredSchedule = await db.getFirstAsync<Schedule>('SELECT * FROM schedules WHERE id = ?', parsed.scheduleId);
+          if (recoveredSchedule) { selected = recoveredSchedule; saved = parsed; }
+        }
+      } catch { /* Ignore an invalid recovery record and load the normal schedule. */ }
+    }
+    const loadedIntervals = await db.getAllAsync<WorkoutInterval>('SELECT id, phase, duration_seconds FROM schedule_intervals WHERE schedule_id = ? ORDER BY position', selected.id);
+    setSchedule(selected);
     setIntervals(loadedIntervals);
-    if (sessionState === 'idle') { setCurrentIndex(0); setSecondsRemaining(loadedIntervals[0]?.duration_seconds ?? 300); }
+    if (saved && !recoveryLoaded.current) {
+      recoveryLoaded.current = true;
+      setCurrentIndex(saved.currentIndex);
+      setSecondsRemaining(saved.secondsRemaining);
+      setWorkoutStartedAt(saved.workoutStartedAt);
+      setWorkoutStatus(saved.workoutStatus);
+      setWorkoutModified(saved.workoutModified);
+      setDistance(saved.distance);
+      setRating(saved.rating);
+      setNotes(saved.notes);
+      setSessionState(saved.sessionState);
+    } else if (sessionState === 'idle') {
+      setCurrentIndex(0); setSecondsRemaining(loadedIntervals[0]?.duration_seconds ?? 300);
+    }
   }, [db, sessionState]);
 
   useFocusEffect(useCallback(() => { loadSchedule(); }, [loadSchedule]));
+
+  useEffect(() => {
+    if (!schedule || sessionState === 'idle' || !workoutStartedAt) return;
+    const recovery: RecoveryState = { scheduleId: schedule.id, sessionState, currentIndex, secondsRemaining, workoutStartedAt, workoutStatus, workoutModified, distance, rating, notes };
+    void db.runAsync("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('active_workout', ?)", JSON.stringify(recovery));
+  }, [db, schedule, sessionState, currentIndex, secondsRemaining, workoutStartedAt, workoutStatus, workoutModified, distance, rating, notes]);
 
   useEffect(() => {
     if (sessionState !== 'ready' && sessionState !== 'active') return;
@@ -90,6 +134,7 @@ export default function RunScreen() {
     if (!schedule || !workoutStartedAt || !rating) return;
     await cancelNotifications();
     await db.runAsync('INSERT INTO workouts (id, schedule_id, started_at, ended_at, status, rating, distance_value, distance_unit, notes, modified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', `workout-${Date.now()}`, schedule.id, workoutStartedAt, new Date().toISOString(), workoutStatus, rating, distance ? Number(distance) : null, 'mi', notes.trim() || null, workoutModified ? 1 : 0);
+    await db.runAsync("DELETE FROM app_metadata WHERE key = 'active_workout'");
     setSessionState('idle'); setCurrentIndex(0); setSecondsRemaining(intervals[0]?.duration_seconds ?? 300); setWorkoutStartedAt(null);
   };
 

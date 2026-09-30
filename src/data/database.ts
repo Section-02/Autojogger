@@ -108,8 +108,16 @@ export async function initializeDatabase(db: SQLiteDatabase) {
       }
       await db.runAsync("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('current_schedule_id', 'schedule-01')");
       await db.runAsync("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('schema_version', '1')");
+      await db.runAsync("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('voice_cues_enabled', '1')");
+      await db.runAsync("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('haptics_enabled', '1')");
+      await db.runAsync("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('cue_volume', '1')");
+      await db.runAsync("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('distance_unit', 'mi')");
     });
   }
+  await db.runAsync("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('voice_cues_enabled', '1')");
+  await db.runAsync("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('haptics_enabled', '1')");
+  await db.runAsync("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('cue_volume', '1')");
+  await db.runAsync("INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('distance_unit', 'mi')");
   await db.runAsync('UPDATE schedules SET pattern = ? WHERE id = ?', schedules[3][1], schedules[3][0]);
   await db.runAsync('UPDATE schedules SET pattern = ? WHERE id = ?', schedules[4][1], schedules[4][0]);
   const intervalCount = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM schedule_intervals');
